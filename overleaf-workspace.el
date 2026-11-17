@@ -34,6 +34,7 @@
 (require 'subr-x)
 (require 'url-parse)
 (require 'auth-source)
+(require 'seq)
 (require 'emacs-collab)
 (require 'emacs-collab-layout)
 (require 'emacs-collab-mirror)
@@ -157,9 +158,23 @@ into the mirror must not be sent to the bridge as a document."
                        (and (cdr hp) (list :port (cdr hp))))))
     (car (apply #'auth-source-search spec))))
 
+(defun overleaf-workspace--writable-sources ()
+  "The entries of `auth-sources' that can store a secret.
+A file that exists but is not writable (an agenix or sops secret, say) is
+left out; other backends (secrets, pass, …) are kept."
+  (seq-remove (lambda (src)
+                (let ((f (cond ((stringp src) src)
+                               ((and (consp src) (stringp (plist-get src :source)))
+                                (plist-get src :source)))))
+                  (and f (file-exists-p (expand-file-name f))
+                       (not (file-writable-p (expand-file-name f))))))
+              auth-sources))
+
 (defun overleaf-workspace--save (server user secret)
-  "Store SECRET for USER on SERVER with auth-source (asks the backend)."
-  (let* ((hp (overleaf-workspace--host+port server))
+  "Store SECRET for USER on SERVER with auth-source (asks the backend).
+Only writable sources are offered."
+  (let* ((auth-sources (overleaf-workspace--writable-sources))
+         (hp (overleaf-workspace--host+port server))
          (found (car (apply #'auth-source-search
                             :host (car hp) :user user :secret secret :max 1
                             :create t :require '(:user :secret)
@@ -169,7 +184,16 @@ into the mirror must not be sent to the bridge as a document."
     found))
 
 (defun overleaf-workspace--ask-save-p (server what)
-  (y-or-n-p (format "Save %s for %s in auth-source? " what (plist-get server :name))))
+  "Ask whether to save WHAT for SERVER; never when no source can store it."
+  (and (overleaf-workspace--writable-sources)
+       (y-or-n-p (format "Save %s for %s in auth-source? " what (plist-get server :name)))))
+
+(defun overleaf-workspace-clean-cookie (value name)
+  "VALUE as pasted, without surrounding blanks or a leading \"NAME=\"."
+  (let ((v (string-trim value)))
+    (if (string-prefix-p (concat name "=") v)
+        (substring v (1+ (length name)))
+      v)))
 
 (defun overleaf-workspace-credentials (server &optional ask)
   "Credentials alist for SERVER, from auth-source.
@@ -180,9 +204,11 @@ never logged or stored anywhere but auth-source."
     ('cookie
      (let* ((found (and (not ask) (overleaf-workspace--lookup server "cookie")))
             (cookie (or (and found (overleaf-workspace--secret-value found))
-                        (let ((c (read-passwd
-                                  (format "Overleaf session cookie for %s: "
-                                          (plist-get server :name)))))
+                        (let ((c (overleaf-workspace-clean-cookie
+                                  (read-passwd
+                                   (format "Overleaf session cookie for %s: "
+                                           (plist-get server :name)))
+                                  (or (plist-get server :cookie-name) "overleaf_session2"))))
                           (when (and (not found) (not (string-empty-p c))
                                      (overleaf-workspace--ask-save-p server "the cookie"))
                             (overleaf-workspace--save server "cookie" c))
