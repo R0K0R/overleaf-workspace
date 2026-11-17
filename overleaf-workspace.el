@@ -36,6 +36,7 @@
 (require 'auth-source)
 (require 'emacs-collab)
 (require 'emacs-collab-layout)
+(require 'emacs-collab-mirror)
 
 (defgroup overleaf-workspace nil
   "Overleaf workspace on emacs-collab."
@@ -57,8 +58,11 @@ names the session cookie."
   "The bridge: an argv list, or a string naming the executable."
   :type '(choice (repeat string) string))
 
-(defcustom overleaf-workspace-mirror-directory "~/collab/overleaf/"
-  "Where projects are mirrored, as SERVER/PROJECT below this directory."
+(defcustom overleaf-workspace-mirror-directory nil
+  "Suggested location of mirrors, as SERVER/PROJECT below this directory.
+Only the suggestion shown when asking where to keep a project's local
+copy (see `emacs-collab-read-mirror-dir'); nil suggests nothing, and
+`emacs-collab-mirror-root' applies."
   :type 'directory)
 
 (defcustom overleaf-workspace-layout-args '(:tree t :terminal t)
@@ -235,11 +239,20 @@ never logged or stored anywhere but auth-source."
     (string-trim r "-+" "-+")))
 
 (defun overleaf-workspace--mirror-dir (server project)
-  (file-name-as-directory
-   (expand-file-name (concat (overleaf-workspace--slug (plist-get server :name)) "/"
-                             (overleaf-workspace--slug
-                              (or (plist-get project :name) (plist-get project :id))))
-                     overleaf-workspace-mirror-directory)))
+  "Suggested mirror of PROJECT on SERVER from the defcustom, or nil."
+  (when overleaf-workspace-mirror-directory
+    (file-name-as-directory
+     (expand-file-name (concat (overleaf-workspace--slug (plist-get server :name)) "/"
+                               (overleaf-workspace--slug
+                                (or (plist-get project :name) (plist-get project :id))))
+                       overleaf-workspace-mirror-directory))))
+
+(defun overleaf-workspace--select-mirror (server project force)
+  "Ask where PROJECT on SERVER is mirrored (remembered unless FORCE)."
+  (emacs-collab-read-mirror-dir
+   "overleaf"
+   (format "%s %s" (plist-get server :url) (or (plist-get project :id) (plist-get project :name)))
+   (overleaf-workspace--mirror-dir server project) force))
 
 (defun overleaf-workspace--bridge-argv ()
   (let* ((c overleaf-workspace-bridge-command)
@@ -297,12 +310,14 @@ one, else the bridge's `main', else the first .tex file."
 ;;; Opening
 
 ;;;###autoload
-(defun overleaf-open-project (&optional server project)
+(defun overleaf-open-project (&optional server project force-select)
   "Open an Overleaf PROJECT on SERVER and build the workspace.
 Interactively, pick a server, then enter the project's name, id or
-pasted URL.  The layout is built once the bridge reports `ready'.
-Return the emacs-collab connection."
-  (interactive)
+pasted URL.  The local copy goes where `emacs-collab-read-mirror-dir'
+says: the directory chosen the first time, remembered per project; with a
+prefix argument (FORCE-SELECT) choose again.  The layout is built once the
+bridge reports `ready'.  Return the emacs-collab connection."
+  (interactive (list nil nil current-prefix-arg))
   (let* ((server (if server (overleaf-workspace--server server)
                    (overleaf-workspace--read-server)))
          (project (cond ((consp project) project)
@@ -312,7 +327,7 @@ Return the emacs-collab connection."
                              (format "Project on %s (name, id or URL): " (plist-get server :name))
                              (delete-dups (copy-sequence overleaf-workspace-project-history))
                              nil nil nil 'overleaf-workspace-project-history)))))
-         (mirror (overleaf-workspace--mirror-dir server project))
+         (mirror (overleaf-workspace--select-mirror server project force-select))
          (argv (overleaf-workspace--bridge-argv))
          (creds (overleaf-workspace-credentials server))
          (params `((server . ,(plist-get server :url))
@@ -320,7 +335,6 @@ Return the emacs-collab connection."
                          `((project_id . ,(plist-get project :id)))
                        `((project_name . ,(plist-get project :name))))
                    (mirror_dir . ,(directory-file-name mirror)))))
-    (make-directory mirror t)
     (when (cl-find mirror overleaf-workspace--sessions
                    :key #'overleaf-workspace-session-mirror :test #'equal)
       (user-error "Already open: %s" mirror))

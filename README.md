@@ -70,8 +70,19 @@ and URLs are exact. Projects you entered are offered again (add
 `overleaf-workspace-project-history` to `savehist-additional-variables` to
 keep them across sessions).
 
-The project is mirrored under `overleaf-workspace-mirror-directory`
-(`~/collab/overleaf/<server>/<project>/`). The layout:
+Where the local copy lives is your choice. The first time a project is
+opened Emacs asks for a directory (`emacs-collab-read-mirror-dir`), created
+if missing and remembered per project, so later opens go there without a
+prompt; `C-u` before the command asks again, starting from the remembered
+directory, and `M-x emacs-collab-forget-mirror` drops a remembered choice.
+The prompt starts at `overleaf-workspace-mirror-directory`/<server>/<project>/ if you set that option
+(a suggestion only; it has no default),
+else `emacs-collab-mirror-root`/<service>/<project>, else the current directory. A
+`.emacs-collab` marker in the directory names the project it mirrors; a
+directory marked as another project is refused, a non-empty unmarked one
+only draws a warning.
+
+The layout:
 
 | pane | content |
 |---|---|

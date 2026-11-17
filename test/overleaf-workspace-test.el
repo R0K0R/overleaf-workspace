@@ -150,6 +150,11 @@
 
 ;;; With a bridge that wants credentials (loopback behind test/authbridge.py)
 
+(defvar ows-test--answer nil
+  "What the stubbed `read-directory-name' returns; nil: the prompt's initial directory.
+`none' makes any prompt an error.")
+(defvar ows-test--prompts nil "The initial directory of every prompt, newest first.")
+
 (defmacro ows-test--with-open (spec &rest body)
   "SPEC: (CONN MIRROR AUTH-LINES LOG [SECRET]).  Open a project through the shim."
   (declare (indent 1))
@@ -159,6 +164,9 @@
           (emacs-collab--connections nil)
           (emacs-collab-need-auth-function nil)
           (emacs-collab-layout-state-file (expand-file-name "layout.eld" base))
+          (emacs-collab-mirror-state-file (expand-file-name "mirrors.eld" base))
+          (emacs-collab-mirror--table 'unloaded)
+          (ows-test--answer nil) (ows-test--prompts nil)
           (emacs-collab-layout--sizes nil) (emacs-collab-layout--sizes-loaded nil)
           (emacs-collab-layout--projects nil) (emacs-collab-layout-register-lsp nil)
           (overleaf-workspace-project-history nil)
@@ -176,7 +184,12 @@
           (unrelated (generate-new-buffer "*unrelated*")))
      (ows-test--with-auth ,(nth 2 spec)
        (unwind-protect
-           (save-window-excursion ,@body)
+           (cl-letf (((symbol-function 'read-directory-name)
+                      (lambda (_prompt &optional dir &rest _)
+                        (push dir ows-test--prompts)
+                        (when (eq ows-test--answer 'none) (error "unexpected prompt"))
+                        (or ows-test--answer dir))))
+             (save-window-excursion ,@body))
          (ignore-errors (when overleaf-workspace--sessions (overleaf-quit)))
          (dolist (b (buffer-list))
            (when-let* ((f (buffer-file-name b)))
@@ -231,6 +244,43 @@
       (should (buffer-live-p unrelated))
       (should (= 1 (length (window-list nil 'no-minibuf))))
       (should-not (eq emacs-collab-need-auth-function #'overleaf-workspace--need-auth)))))
+
+(ert-deftest ows-test-mirror-selected-remembered-forced ()
+  (ows-test--with-open (conn mirror '("machine t.example port 8020 login me@x.org password good") log)
+    (let* ((overleaf-workspace-mirror-directory nil)
+           (id "0123456789abcdef01234567")
+           (chosen (file-name-as-directory (expand-file-name "picked/here" base)))
+           (other (file-name-as-directory (expand-file-name "second" base))))
+      (dolist (d (list chosen other))
+        (make-directory d t)
+        (with-temp-file (expand-file-name "main.tex" d)
+          (insert "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n")))
+      (setq ows-test--answer chosen)
+      (overleaf-open-project "T" id)
+      (ows-test--wait (lambda () (emacs-collab-layout-project chosen)))
+      (should (= 1 (length ows-test--prompts)))
+      (let ((params (alist-get 'params (json-parse-string
+                                        (car (split-string (with-temp-buffer
+                                                             (insert-file-contents log) (buffer-string))
+                                                           "\n" t))
+                                        :object-type 'alist))))
+        (should (equal (alist-get 'mirror_dir params) (directory-file-name chosen))))
+      (overleaf-quit)
+      ;; remembered: no prompt
+      (setq ows-test--answer 'none)
+      (overleaf-open-project "T" id)
+      (ows-test--wait (lambda () (emacs-collab-layout-project chosen)))
+      (should (= 1 (length ows-test--prompts)))
+      (overleaf-quit)
+      ;; forced: prompts again, starting from the remembered directory
+      (setq ows-test--answer other)
+      (overleaf-open-project "T" id t)
+      (ows-test--wait (lambda () (emacs-collab-layout-project other)))
+      (should (= 2 (length ows-test--prompts)))
+      (should (equal (car ows-test--prompts) chosen))
+      (should (equal (emacs-collab-mirror-remembered "overleaf" (format "http://t.example:8020 %s" id))
+                     other))
+      (overleaf-quit))))
 
 (ert-deftest ows-test-need-auth-asks-again ()
   (ows-test--with-open (conn mirror '("machine t.example port 8020 login me@x.org password WRONG") log)
