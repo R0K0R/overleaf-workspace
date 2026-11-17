@@ -343,3 +343,8 @@
 
 (provide 'overleaf-workspace-test)
 ;;; overleaf-workspace-test.el ends here
+
+(ert-deftest ows-test-clean-cookie ()
+  (should (equal (overleaf-workspace-clean-cookie " s%3Aabc.def \n" "overleaf_session2") "s%3Aabc.def"))
+  (should (equal (overleaf-workspace-clean-cookie "overleaf_session2=s%3Aabc" "overleaf_session2") "s%3Aabc"))
+  (should (equal (overleaf-workspace-clean-cookie "s:\"abc.def\"" "overleaf_session2") "s:abc.def")))

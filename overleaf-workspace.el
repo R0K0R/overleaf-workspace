@@ -189,10 +189,15 @@ Only writable sources are offered."
        (y-or-n-p (format "Save %s for %s in auth-source? " what (plist-get server :name)))))
 
 (defun overleaf-workspace-clean-cookie (value name)
-  "VALUE as pasted, without surrounding blanks or a leading \"NAME=\"."
+  "VALUE as pasted, made into the cookie's raw value.
+Strips surrounding blanks and a leading \"NAME=\", and turns the
+s:\"…\" form Firefox's storage sidebar shows (the value parsed as an
+object) back into s:…."
   (let ((v (string-trim value)))
-    (if (string-prefix-p (concat name "=") v)
-        (substring v (1+ (length name)))
+    (when (string-prefix-p (concat name "=") v)
+      (setq v (substring v (1+ (length name)))))
+    (if (string-match "\\`s:\"\\(.*\\)\"\\'" v)
+        (concat "s:" (match-string 1 v))
       v)))
 
 (defun overleaf-workspace-credentials (server &optional ask)
